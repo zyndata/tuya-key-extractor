@@ -1,37 +1,151 @@
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
 using System.Text.RegularExpressions;
-using System;
+using SFB;
+using System.IO;
+using UnityEngine.UI;
+using UnityEngine.Networking;
 
 public class ParseController : MonoBehaviour
 {
     private readonly string CHECK_START = "{\"deviceRespBeen\"";
     private readonly string CHECK_END = "</string></map>";
 
-    [SerializeField] private TMP_InputField inputField;
+    [SerializeField] private TextMeshProUGUI inputFileMesh;
     [SerializeField] private TextMeshProUGUI warningMesh;
     [SerializeField] private GameObject entryPrefab;
     [SerializeField] private GameObject inputView;
     [SerializeField] private GameObject resultView;
+    [SerializeField] private Button extractButton;
     [SerializeField] private Transform entryContainer;
-    [Space(10)]
-    [SerializeField] private ExtractedData data; //serialized only for testing inside editor
 
+    private ExtractedData data;
+
+
+    #region  Singleton
+
+    static ParseController instance;
+
+    public static ParseController Instance
+    {
+        get
+        {
+            if (instance == null)
+            {
+                instance = GameObject.FindObjectOfType<ParseController>();
+            }
+            return instance;
+        }
+    }
+
+    #endregion
+
+
+    private void Awake()
+    {
+        if (instance == null)
+        {
+            instance = this;
+        }
+    }
 
     private void Start()
     {
+        Application.targetFrameRate = 30;
         ResetView();
-        inputField.text = string.Empty;
     }
 
     private void ResetView()
     {
         SetWarningMessage(string.Empty);
+        inputFileMesh.text = string.Empty;
         entryContainer.ClearChildren();
         inputView.SetActiveOptimized(true);
         resultView.SetActiveOptimized(false);
+        extractButton.interactable = false;
+    }
+
+    //standalone and editor
+    public void OnChooseFileClicked()
+    {
+        ExtensionFilter[] extensions = new[] { new ExtensionFilter("Txt Files", "xml") };
+        string[] paths = StandaloneFileBrowser.OpenFilePanel("Open File", "", extensions, false);
+
+        if (paths != null && paths.Length > 0)
+        {
+            StartCoroutine(OutputRoutine(paths[0]));
+        }
+    }
+
+    public IEnumerator OutputRoutine(string url)
+    {
+        UnityWebRequest loader = new UnityWebRequest(url);
+        loader.downloadHandler = new DownloadHandlerBuffer();
+        yield return loader.SendWebRequest();
+
+        string loadedFile = string.Empty;
+
+        if (Application.platform == RuntimePlatform.WebGLPlayer)
+        {
+            loadedFile = loader.downloadHandler.text;
+        }
+        else
+        {
+            loadedFile = ReadFileStandalone(url);
+            SetWarningMessage(url);
+        }
+
+        inputFileMesh.text = loadedFile; //show loaded file in window
+
+        bool isEmpty = IsEmpty(loadedFile);
+        if (isEmpty == false)
+        {
+            string cleanText = GetCleanText(loadedFile);
+
+            if (IsXmlValid(cleanText) == false)
+            {
+                SetWarningMessage("Xml do not look valid");
+            }
+            else
+            {
+                string json = ExtractJsonObject(cleanText);
+                // Debug.Log(json);
+
+                data = JsonUtility.FromJson<ExtractedData>(json);
+
+                if (data == null)
+                {
+                    SetWarningMessage("Error parsing json");
+                }
+                else if (data.deviceRespBeen == null || data.deviceRespBeen.Length == 0)
+                {
+                    SetWarningMessage("No linked device found");
+                }
+                else
+                {
+                    extractButton.interactable = !isEmpty;
+                }
+            }
+        }
+        else
+        {
+            SetWarningMessage("This file looks empty");
+        }
+    }
+
+    private string ReadFileStandalone(string path)
+    {
+        string textFileContent = string.Empty;
+        StreamReader reader = new StreamReader(path);
+        textFileContent = reader.ReadToEnd();
+        reader.Close();
+
+        if (IsEmpty(textFileContent) == true)
+        {
+            SetWarningMessage("This file looks empty");
+        }
+        return textFileContent;
     }
 
     public void OnBackClicked()
@@ -41,41 +155,6 @@ public class ParseController : MonoBehaviour
 
     public void OnExtractClicked()
     {
-        SetWarningMessage(string.Empty);
-
-        string input = inputField.text;
-        //Debug.Log("input field " + input);
-
-        if (IsEmpty(input) == true)
-        {
-            SetWarningMessage("Paste xml data first");
-            return;
-        }
-
-        string cleanText = CleanupInputText(inputField.text);
-
-        if (IsXmlValid(cleanText) == false)
-        {
-            SetWarningMessage("Xml do not look valid");
-            return;
-        }
-
-        string json = ExtractJsonObject(cleanText);
-        // Debug.Log(json);
-
-        data = JsonUtility.FromJson<ExtractedData>(json);
-
-        if (data == null)
-        {
-            SetWarningMessage("Error parsing json");
-            return;
-        }
-        else if (data.deviceRespBeen == null || data.deviceRespBeen.Length == 0)
-        {
-            SetWarningMessage("No linked device found");
-            return;
-        }
-
         DisplayExtractedData(data);
     }
 
@@ -98,13 +177,13 @@ public class ParseController : MonoBehaviour
         warningMesh.text = message;
     }
 
-    private string CleanupInputText(string cleanText)
+    private string GetCleanText(string inputText)
     {
-        cleanText = cleanText.Trim();
-        cleanText = cleanText.Replace("&quot;", "\"");
-        cleanText = cleanText.Replace("& quot;", "\"");
-        cleanText = Regex.Replace(cleanText, @"\r\n?|\n", string.Empty);
-        return cleanText;
+        inputText = inputText.Trim();
+        inputText = inputText.Replace("&quot;", "\"");
+        inputText = inputText.Replace("& quot;", "\"");
+        inputText = Regex.Replace(inputText, @"\r\n?|\n", string.Empty);
+        return inputText;
     }
 
     private string ExtractJsonObject(string mixedString)
@@ -138,7 +217,6 @@ public class ParseController : MonoBehaviour
         }
         return false;
     }
-
 
 
 }
