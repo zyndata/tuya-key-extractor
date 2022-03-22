@@ -12,13 +12,14 @@ public class ParseController : MonoBehaviour
     private readonly string CHECK_START = "{\"deviceRespBeen\"";
     private readonly string CHECK_END = "</string></map>";
 
+    [SerializeField] private RectTransform inputTextContainer;
+    [SerializeField] private RectTransform resultContainer;
     [SerializeField] private TextMeshProUGUI inputFileMesh;
     [SerializeField] private TextMeshProUGUI warningMesh;
     [SerializeField] private GameObject entryPrefab;
     [SerializeField] private GameObject inputView;
     [SerializeField] private GameObject resultView;
     [SerializeField] private Button extractButton;
-    [SerializeField] private Transform entryContainer;
 
     private ExtractedData data;
 
@@ -60,7 +61,7 @@ public class ParseController : MonoBehaviour
     {
         SetWarningMessage(string.Empty);
         inputFileMesh.text = string.Empty;
-        entryContainer.ClearChildren();
+        resultContainer.transform.ClearChildren();
         inputView.SetActiveOptimized(true);
         resultView.SetActiveOptimized(false);
         extractButton.interactable = false;
@@ -77,6 +78,7 @@ public class ParseController : MonoBehaviour
             StartCoroutine(OutputRoutine(paths[0]));
         }
     }
+
 
     public IEnumerator OutputRoutine(string url)
     {
@@ -97,6 +99,7 @@ public class ParseController : MonoBehaviour
         }
 
         inputFileMesh.text = loadedFile; //show loaded file in window
+        LayoutRebuilder.ForceRebuildLayoutImmediate(inputTextContainer);//make sure scroll bar appear
 
         bool isEmpty = IsEmpty(loadedFile);
         if (isEmpty == false)
@@ -162,7 +165,7 @@ public class ParseController : MonoBehaviour
     {
         for (int i = 0; i < data.deviceRespBeen.Length; i++)
         {
-            GameObject entryObject = Instantiate(entryPrefab, entryContainer);
+            GameObject entryObject = Instantiate(entryPrefab, resultContainer.transform);
             entryObject.name = "Device " + i;
             EntryRow entryScript = entryObject.GetComponent<EntryRow>();
             entryScript.SetData(i + 1, data.deviceRespBeen[i]);
@@ -170,6 +173,7 @@ public class ParseController : MonoBehaviour
 
         inputView.SetActiveOptimized(false);
         resultView.SetActiveOptimized(true);
+        LayoutRebuilder.ForceRebuildLayoutImmediate(resultContainer);//make sure scroll bar appear
     }
 
     private void SetWarningMessage(string message)
