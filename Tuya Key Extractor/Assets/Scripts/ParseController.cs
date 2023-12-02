@@ -1,226 +1,218 @@
 using System.Collections;
-using UnityEngine;
-using TMPro;
-using System.Text.RegularExpressions;
-using SFB;
 using System.IO;
-using UnityEngine.UI;
+using System.Xml;
+using SFB;
+using TMPro;
+using UnityEngine;
 using UnityEngine.Networking;
+using UnityEngine.UI;
 
 public class ParseController : MonoBehaviour
 {
-    private readonly string CHECK_START = "{\"deviceRespBeen\"";
-    private readonly string CHECK_END = "</string></map>";
+	private readonly string CHECK_START = "{\"deviceRespBeen\"";
 
-    [SerializeField] private RectTransform inputTextContainer;
-    [SerializeField] private RectTransform resultContainer;
-    [SerializeField] private TextMeshProUGUI inputFileMesh;
-    [SerializeField] private TextMeshProUGUI warningMesh;
-    [SerializeField] private GameObject entryPrefab;
-    [SerializeField] private GameObject inputView;
-    [SerializeField] private GameObject resultView;
-    [SerializeField] private Button extractButton;
+	[SerializeField] private RectTransform inputTextContainer;
+	[SerializeField] private RectTransform resultContainer;
+	[SerializeField] private TextMeshProUGUI inputFileMesh;
+	[SerializeField] private TextMeshProUGUI warningMesh;
+	[SerializeField] private GameObject entryPrefab;
+	[SerializeField] private GameObject inputView;
+	[SerializeField] private GameObject resultView;
+	[SerializeField] private Button extractButton;
 
-    private ExtractedData data;
+	private ExtractedData data;
 
+	#region Singleton
 
-    #region  Singleton
+	private static ParseController instance;
 
-    static ParseController instance;
+	public static ParseController Instance
+	{
+		get
+		{
+			if (instance == null)
+			{
+				instance = FindObjectOfType<ParseController>();
+			}
 
-    public static ParseController Instance
-    {
-        get
-        {
-            if (instance == null)
-            {
-                instance = GameObject.FindObjectOfType<ParseController>();
-            }
-            return instance;
-        }
-    }
+			return instance;
+		}
+	}
 
-    #endregion
+	#endregion
 
+	private void Awake ()
+	{
+		if (instance == null)
+		{
+			instance = this;
+		}
+	}
 
-    private void Awake()
-    {
-        if (instance == null)
-        {
-            instance = this;
-        }
-    }
+	private void Start ()
+	{
+		Application.targetFrameRate = 30;
+		ResetView();
+	}
+	
+	public void OnBackClicked ()
+	{
+		ResetView();
+	}
 
-    private void Start()
-    {
-        Application.targetFrameRate = 30;
-        ResetView();
-    }
+	public void OnExtractClicked ()
+	{
+		DisplayExtractedData(data);
+	}
+	
+	//standalone and editor
+	public void OnChooseFileClicked ()
+	{
+		ExtensionFilter[] extensions = new[] {new ExtensionFilter("Txt Files", "xml")};
+		string[] paths = StandaloneFileBrowser.OpenFilePanel("Open File", "", extensions, false);
 
-    private void ResetView()
-    {
-        SetWarningMessage(string.Empty);
-        inputFileMesh.text = string.Empty;
-        resultContainer.transform.ClearChildren();
-        inputView.SetActiveOptimized(true);
-        resultView.SetActiveOptimized(false);
-        extractButton.interactable = false;
-    }
+		if (paths != null && paths.Length > 0)
+		{
+			StartCoroutine(OutputRoutine(paths[0]));
+		}
+	}
 
-    //standalone and editor
-    public void OnChooseFileClicked()
-    {
-        ExtensionFilter[] extensions = new[] { new ExtensionFilter("Txt Files", "xml") };
-        string[] paths = StandaloneFileBrowser.OpenFilePanel("Open File", "", extensions, false);
+	public IEnumerator OutputRoutine (string url)
+	{
+		UnityWebRequest loader = new(url);
+		loader.downloadHandler = new DownloadHandlerBuffer();
+		yield return loader.SendWebRequest();
 
-        if (paths != null && paths.Length > 0)
-        {
-            StartCoroutine(OutputRoutine(paths[0]));
-        }
-    }
+		string loadedFile = string.Empty;
 
+		if (Application.platform == RuntimePlatform.WebGLPlayer)
+		{
+			loadedFile = loader.downloadHandler.text;
+		}
+		else
+		{
+			loadedFile = ReadFileStandalone(url);
+			SetWarningMessage(url);
+		}
 
-    public IEnumerator OutputRoutine(string url)
-    {
-        UnityWebRequest loader = new UnityWebRequest(url);
-        loader.downloadHandler = new DownloadHandlerBuffer();
-        yield return loader.SendWebRequest();
+		XmlDocument doc = new();
+		string xmlData = loadedFile;
+		doc.Load(new StringReader(xmlData));
+		string loadedXml = doc.InnerText;
 
-        string loadedFile = string.Empty;
+		inputFileMesh.text = loadedXml; //show loaded file in window
 
-        if (Application.platform == RuntimePlatform.WebGLPlayer)
-        {
-            loadedFile = loader.downloadHandler.text;
-        }
-        else
-        {
-            loadedFile = ReadFileStandalone(url);
-            SetWarningMessage(url);
-        }
+		LayoutRebuilder.ForceRebuildLayoutImmediate(inputTextContainer); //make sure scroll bar appear
 
-        inputFileMesh.text = loadedFile; //show loaded file in window
-        LayoutRebuilder.ForceRebuildLayoutImmediate(inputTextContainer);//make sure scroll bar appear
+		if (IsEmpty(loadedXml) == false)
+		{
+			string cleanText = GetTrimmedText(loadedXml);
 
-        bool isEmpty = IsEmpty(loadedFile);
-        if (isEmpty == false)
-        {
-            string cleanText = GetCleanText(loadedFile);
+			// if (IsXmlValid(cleanText) == false)
+			if (IsXmlValid(cleanText) == false)
+			{
+				SetWarningMessage("Xml do not look valid");
+			}
+			else
+			{
+				string json = ExtractJsonObject(cleanText);
+				data = JsonUtility.FromJson<ExtractedData>(json);
 
-            if (IsXmlValid(cleanText) == false)
-            {
-                SetWarningMessage("Xml do not look valid");
-            }
-            else
-            {
-                string json = ExtractJsonObject(cleanText);
-                // Debug.Log(json);
+				if (data == null)
+				{
+					SetWarningMessage("Error parsing json");
+				}
+				else if (data.deviceRespBeen == null || data.deviceRespBeen.Length == 0)
+				{
+					SetWarningMessage("No linked device found");
+				}
+				else
+				{
+					extractButton.interactable = true;
+				}
+			}
+		}
+		else
+		{
+			SetWarningMessage("This file looks empty");
+		}
+	}
 
-                data = JsonUtility.FromJson<ExtractedData>(json);
+	private string ReadFileStandalone (string path)
+	{
+		string textFileContent = string.Empty;
+		StreamReader reader = new(path);
+		textFileContent = reader.ReadToEnd();
+		reader.Close();
 
-                if (data == null)
-                {
-                    SetWarningMessage("Error parsing json");
-                }
-                else if (data.deviceRespBeen == null || data.deviceRespBeen.Length == 0)
-                {
-                    SetWarningMessage("No linked device found");
-                }
-                else
-                {
-                    extractButton.interactable = !isEmpty;
-                }
-            }
-        }
-        else
-        {
-            SetWarningMessage("This file looks empty");
-        }
-    }
+		if (IsEmpty(textFileContent) == true)
+		{
+			SetWarningMessage("This file looks empty");
+		}
 
-    private string ReadFileStandalone(string path)
-    {
-        string textFileContent = string.Empty;
-        StreamReader reader = new StreamReader(path);
-        textFileContent = reader.ReadToEnd();
-        reader.Close();
+		return textFileContent;
+	}
 
-        if (IsEmpty(textFileContent) == true)
-        {
-            SetWarningMessage("This file looks empty");
-        }
-        return textFileContent;
-    }
+	private void DisplayExtractedData (ExtractedData data)
+	{
+		for (int i = 0; i < data.deviceRespBeen.Length; i++)
+		{
+			GameObject entryObject = Instantiate(entryPrefab, resultContainer.transform);
+			entryObject.name = "Device " + i;
+			EntryRow entryScript = entryObject.GetComponent<EntryRow>();
+			entryScript.SetData(i + 1, data.deviceRespBeen[i]);
+		}
 
-    public void OnBackClicked()
-    {
-        ResetView();
-    }
+		inputView.SetActiveOptimized(false);
+		resultView.SetActiveOptimized(true);
+		LayoutRebuilder.ForceRebuildLayoutImmediate(resultContainer); //make sure scroll bar appear
+	}
+	
+	private void ResetView ()
+	{
+		SetWarningMessage(string.Empty);
+		inputFileMesh.text = string.Empty;
+		resultContainer.transform.ClearChildren();
+		inputView.SetActiveOptimized(true);
+		resultView.SetActiveOptimized(false);
+		extractButton.interactable = false;
+	}
 
-    public void OnExtractClicked()
-    {
-        DisplayExtractedData(data);
-    }
+	private void SetWarningMessage (string message)
+	{
+		warningMesh.text = message;
+	}
 
-    private void DisplayExtractedData(ExtractedData data)
-    {
-        for (int i = 0; i < data.deviceRespBeen.Length; i++)
-        {
-            GameObject entryObject = Instantiate(entryPrefab, resultContainer.transform);
-            entryObject.name = "Device " + i;
-            EntryRow entryScript = entryObject.GetComponent<EntryRow>();
-            entryScript.SetData(i + 1, data.deviceRespBeen[i]);
-        }
+	private string GetTrimmedText (string inputText)
+	{
+		return inputText.Trim();
+	}
 
-        inputView.SetActiveOptimized(false);
-        resultView.SetActiveOptimized(true);
-        LayoutRebuilder.ForceRebuildLayoutImmediate(resultContainer);//make sure scroll bar appear
-    }
+	private string ExtractJsonObject (string mixedString)
+	{
+		int startIndex = mixedString.IndexOf(CHECK_START);
+		string rawJson = mixedString.Remove(0, startIndex);
 
-    private void SetWarningMessage(string message)
-    {
-        warningMesh.text = message;
-    }
+		return rawJson;
+	}
 
-    private string GetCleanText(string inputText)
-    {
-        inputText = inputText.Trim();
-        inputText = inputText.Replace("&quot;", "\"");
-        inputText = inputText.Replace("& quot;", "\"");
-        inputText = Regex.Replace(inputText, @"\r\n?|\n", string.Empty);
-        return inputText;
-    }
+	private bool IsEmpty (string text)
+	{
+		if (string.IsNullOrEmpty(text) == true)
+		{
+			return true;
+		}
 
-    private string ExtractJsonObject(string mixedString)
-    {
-        int startIndex = mixedString.IndexOf(CHECK_START);
-        int endIndex = mixedString.IndexOf(CHECK_END);
+		return false;
+	}
 
-        int totalLength = mixedString.Length;
-        int endLenght = totalLength - endIndex;
+	private bool IsXmlValid (string text)
+	{
+		if (text.Contains(CHECK_START) == true)
+		{
+			return true;
+		}
 
-        string rawJson = mixedString.Remove(endIndex, endLenght);
-        rawJson = rawJson.Remove(0, startIndex);
-
-        return rawJson;
-    }
-
-    private bool IsEmpty(string text)
-    {
-        if (string.IsNullOrEmpty(text) == true)
-        {
-            return true;
-        }
-        return false;
-    }
-
-    private bool IsXmlValid(string text)
-    {
-        if (text.Contains(CHECK_END) == true && text.Contains(CHECK_START) == true)
-        {
-            return true;
-        }
-        return false;
-    }
-
-
+		return false;
+	}
 }
